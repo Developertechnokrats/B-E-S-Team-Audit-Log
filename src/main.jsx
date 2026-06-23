@@ -12,6 +12,7 @@ import {
   Filter,
   Lock,
   LogOut,
+  RefreshCw,
   ShieldCheck,
   Upload,
   UserRound,
@@ -713,10 +714,25 @@ function Dashboard({ mode, session }) {
           <div>
             <p className="eyebrow">Selected account</p>
             <h1>{activeAccount?.name || 'No account assigned'}</h1>
+            <p className="topbar-subtitle">{formatNumber(totalRows)} records · {filterOptions.modules.length || 0} modules · Account audit logs</p>
           </div>
-          <div className="role-pill">
-            <ShieldCheck size={16} />
-            {canUpload ? 'Admin access' : 'View only'}
+          <div className="topbar-actions">
+            {activeView === 'activity' && (
+              <>
+                <button className="ghost-button compact" type="button" onClick={() => setActiveView('upload')}>
+                  <Upload size={16} />
+                  Upload file
+                </button>
+                <button className="ghost-button compact" type="button" onClick={() => refreshAccountData(activeAccountId)}>
+                  <RefreshCw size={16} />
+                  Refresh
+                </button>
+              </>
+            )}
+            <div className="role-pill">
+              <ShieldCheck size={16} />
+              {canUpload ? 'Admin access' : 'View only'}
+            </div>
           </div>
         </header>
 
@@ -724,10 +740,10 @@ function Dashboard({ mode, session }) {
 
         {activeView === 'activity' && (
           <>
-            <section className="stats-grid">
-              <Stat label="Rows" value={formatNumber(totalRows)} />
-              <Stat label="Modules" value={filterOptions.modules.length || stats.modules} />
-              <Stat label="Users mapped" value={stats.people} />
+            <section className="stats-grid metric-pills">
+              <Stat label="Audit records" value={formatNumber(totalRows)} />
+              <Stat label="Modules on file" value={filterOptions.modules.length || stats.modules} />
+              <Stat label="Mapped users" value={stats.people} />
               <Stat label="Last activity" value={stats.lastActivity} />
             </section>
 
@@ -869,64 +885,44 @@ function Filters({ filters, setFilters, options }) {
 
 function ActivityTable({ rows, loading, onViewDetails }) {
   return (
-    <div className={`table-wrap ${loading ? 'is-loading' : ''}`}>
-      <table>
-        <thead>
-          <tr>
-            <th>Document ID</th>
-            <th>Document Name</th>
-            <th>Module</th>
-            <th>Action</th>
-            <th>Modified By (Id)</th>
-            <th>Date & Time</th>
-            <th>Details</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading && !rows.length && (
-            <tr>
-              <td colSpan="7" className="empty-cell">
-                Loading records...
-              </td>
-            </tr>
-          )}
-          {rows.map((row) => (
-              <tr key={row.id}>
-                <td className="id-cell" title={row.document_id}>
-                  {row.document_id}
-                </td>
-                <td className="name-cell">{row.document_name}</td>
-                <td>{row.module}</td>
-                <td>
-                  <span className="action-chip">{row.action}</span>
-                </td>
-                <td className="modified-cell">
-                  <strong title={row.modified_by_name}>{row.modified_by_name}</strong>
-                  <span className="subtle" title={row.modified_by_id}>
-                    {row.modified_by_id}
-                  </span>
-                </td>
-                <td className="date-cell">{formatDateTime(row.modified_at)}</td>
-                <td className="details-cell">
-                  {row.details ? (
-                    <button className="icon-button" type="button" title="View details" onClick={() => onViewDetails(row)}>
-                      <Eye size={16} />
-                    </button>
-                  ) : (
-                    <span className="muted">No details</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          {!loading && !rows.length && (
-            <tr>
-              <td colSpan="7" className="empty-cell">
-                No records match the current filters.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className={`activity-list ${loading ? 'is-loading' : ''}`}>
+      {loading && !rows.length && <div className="empty-list">Loading records...</div>}
+
+      {rows.map((row) => (
+        <article className="activity-card" key={row.id}>
+          <div className="activity-avatar">{getInitials(row.document_name || row.document_id)}</div>
+
+          <div className="activity-main">
+            <strong>{row.document_name || 'Untitled document'}</strong>
+            <span title={row.document_id}>{row.document_id}</span>
+          </div>
+
+          <div className="activity-meta">
+            <span className="module-chip">{row.module}</span>
+            <span className="action-chip">{row.action}</span>
+          </div>
+
+          <div className="activity-person">
+            <strong title={row.modified_by_name}>{row.modified_by_name}</strong>
+            <span title={row.modified_by_id}>{row.modified_by_id}</span>
+          </div>
+
+          <div className="date-chip">{formatDateTime(row.modified_at)}</div>
+
+          <button
+            className="details-button"
+            type="button"
+            title={row.details ? 'View details' : 'No details'}
+            disabled={!row.details}
+            onClick={() => row.details && onViewDetails(row)}
+          >
+            <Eye size={15} />
+            Details
+          </button>
+        </article>
+      ))}
+
+      {!loading && !rows.length && <div className="empty-list">No records match the current filters.</div>}
       {loading && rows.length > 0 && <div className="table-loading-badge">Updating results...</div>}
     </div>
   );
@@ -1633,6 +1629,21 @@ function formatDetails(value) {
   } catch {
     return String(value);
   }
+}
+
+function getInitials(value) {
+  const words = String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) return 'AL';
+
+  return words
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase();
 }
 
 createRoot(document.getElementById('root')).render(<App />);
