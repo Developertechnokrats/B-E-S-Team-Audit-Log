@@ -435,29 +435,26 @@ function Dashboard({ mode, session }) {
       return;
     }
 
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-    let rowQuery = supabase
-        .from('document_activity_view')
-        .select('*', { count: 'exact' })
-        .eq('account_id', accountId)
-        .order('modified_at', { ascending: false })
-        .range(from, to);
+    const searchParams = getSearchParams(accountId, filters, page, pageSize);
 
-    rowQuery = applyServerFilters(rowQuery, filters);
-
-    const [{ data: rowData, error: rowError, count }, { data: mappingData, error: mappingError }, optionsResult] = await Promise.all([
-      rowQuery,
+    const [
+      { data: rowData, error: rowError },
+      { data: countData, error: countError },
+      { data: mappingData, error: mappingError },
+      optionsResult,
+    ] = await Promise.all([
+      supabase.rpc('search_document_activity', searchParams),
+      supabase.rpc('count_document_activity', searchParams),
       supabase.from('modifier_mappings').select('*').eq('account_id', accountId).order('modified_by_id'),
       loadFilterOptions(accountId),
     ]);
 
-    if (rowError || mappingError) {
-      setStatus(rowError?.message || mappingError?.message);
+    if (rowError || countError || mappingError) {
+      setStatus(rowError?.message || countError?.message || mappingError?.message);
     } else {
       setRows(rowData || []);
       setMappings(mappingData || []);
-      setTotalRows(count || 0);
+      setTotalRows(countData || 0);
       setFilterOptions(optionsResult);
       setStatus('');
     }
@@ -1313,39 +1310,19 @@ function filterRows(rows, filters) {
   });
 }
 
-function applyServerFilters(query, filters) {
-  let nextQuery = query;
-
-  if (filters.documentId.trim()) {
-    nextQuery = nextQuery.ilike('document_id', `%${escapeLike(filters.documentId.trim())}%`);
-  }
-
-  if (filters.documentName.trim()) {
-    nextQuery = nextQuery.ilike('document_name', `%${escapeLike(filters.documentName.trim())}%`);
-  }
-
-  if (filters.module) {
-    nextQuery = nextQuery.eq('module', filters.module);
-  }
-
-  if (filters.action) {
-    nextQuery = nextQuery.eq('action', filters.action);
-  }
-
-  if (filters.modifiedBy.trim()) {
-    const term = sanitizeOrFilterValue(filters.modifiedBy.trim());
-    nextQuery = nextQuery.or(`modified_by_id.ilike.%${term}%,modified_by_name.ilike.%${term}%`);
-  }
-
-  if (filters.from) {
-    nextQuery = nextQuery.gte('modified_at', `${filters.from}T00:00:00`);
-  }
-
-  if (filters.to) {
-    nextQuery = nextQuery.lte('modified_at', `${filters.to}T23:59:59`);
-  }
-
-  return nextQuery;
+function getSearchParams(accountId, filters, page, pageSize) {
+  return {
+    target_account_id: accountId,
+    p_document_id: cleanFilterValue(filters.documentId),
+    p_document_name: cleanFilterValue(filters.documentName),
+    p_module: cleanFilterValue(filters.module),
+    p_action: cleanFilterValue(filters.action),
+    p_modified_by: cleanFilterValue(filters.modifiedBy),
+    p_from: filters.from ? `${filters.from}T00:00:00` : null,
+    p_to: filters.to ? `${filters.to}T23:59:59` : null,
+    p_limit: pageSize,
+    p_offset: (page - 1) * pageSize,
+  };
 }
 
 async function loadFilterOptions(accountId) {
@@ -1507,12 +1484,9 @@ function normalizeUploadRow(row, index, accountId) {
   };
 }
 
-function escapeLike(value) {
-  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
-}
-
-function sanitizeOrFilterValue(value) {
-  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_').replaceAll(',', '\\,');
+function cleanFilterValue(value) {
+  const nextValue = String(value || '').trim();
+  return nextValue || null;
 }
 
 function isUuid(value) {
