@@ -203,6 +203,8 @@ function Dashboard({ mode, session }) {
   const [mappings, setMappings] = useState(demoMappings);
   const [filters, setFilters] = useState(emptyFilters());
   const [filterOptions, setFilterOptions] = useState({ modules: [], actions: [] });
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [accountUsers, setAccountUsers] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [totalRows, setTotalRows] = useState(demoRows.filter((row) => row.account_id === demoAccounts[0].id).length);
@@ -212,6 +214,7 @@ function Dashboard({ mode, session }) {
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId);
   const canUpload = profile.role === 'admin';
+  const canManage = profile.role === 'admin';
 
   useEffect(() => {
     setPage(1);
@@ -250,6 +253,147 @@ function Dashboard({ mode, session }) {
     setAccounts(accountData || []);
     setActiveAccountId((accountData && accountData[0]?.id) || '');
     setLoading(false);
+  }
+
+  async function refreshAccounts() {
+    if (mode !== 'live') {
+      return;
+    }
+
+    const { data, error } = await supabase.from('accounts').select('id, name').order('name');
+
+    if (error) {
+      setStatus(error.message);
+      return;
+    }
+
+    setAccounts(data || []);
+  }
+
+  async function refreshAdminData() {
+    if (mode !== 'live' || !canManage) {
+      return;
+    }
+
+    const [{ data: usersData, error: usersError }, { data: membershipsData, error: membershipsError }] = await Promise.all([
+      supabase.from('profiles').select('id, full_name, role').order('full_name'),
+      supabase.from('account_users').select('account_id, user_id'),
+    ]);
+
+    if (usersError || membershipsError) {
+      setStatus(usersError?.message || membershipsError?.message);
+      return;
+    }
+
+    setAdminUsers(usersData || []);
+    setAccountUsers(membershipsData || []);
+  }
+
+  useEffect(() => {
+    refreshAdminData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, canManage, accounts.length]);
+
+  async function createAccount(name) {
+    if (!name.trim()) return;
+
+    if (mode !== 'live') {
+      const account = { id: crypto.randomUUID(), name: name.trim() };
+      setAccounts((current) => [...current, account]);
+      setActiveAccountId(account.id);
+      setStatus(`Created account ${account.name}.`);
+      return;
+    }
+
+    const { data, error } = await supabase.from('accounts').insert({ name: name.trim() }).select('id, name').single();
+
+    if (error) {
+      setStatus(error.message);
+      return;
+    }
+
+    await refreshAccounts();
+    setActiveAccountId(data.id);
+    setStatus(`Created account ${data.name}.`);
+  }
+
+  async function renameAccount(accountId, name) {
+    if (!accountId || !name.trim()) return;
+
+    if (mode !== 'live') {
+      setAccounts((current) => current.map((account) => (account.id === accountId ? { ...account, name: name.trim() } : account)));
+      setStatus(`Renamed account to ${name.trim()}.`);
+      return;
+    }
+
+    const { error } = await supabase.from('accounts').update({ name: name.trim() }).eq('id', accountId);
+
+    if (error) {
+      setStatus(error.message);
+      return;
+    }
+
+    await refreshAccounts();
+    setStatus(`Renamed account to ${name.trim()}.`);
+  }
+
+  async function createUser(userInput) {
+    if (mode !== 'live') {
+      const user = {
+        id: crypto.randomUUID(),
+        full_name: userInput.fullName,
+        role: userInput.role,
+      };
+      setAdminUsers((current) => [...current, user]);
+      setAccountUsers((current) => [
+        ...current,
+        ...userInput.accountIds.map((accountId) => ({ account_id: accountId, user_id: user.id })),
+      ]);
+      setStatus(`Created user ${userInput.fullName}.`);
+      return;
+    }
+
+    const response = await fetch('/.netlify/functions/admin-create-user', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(userInput),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setStatus(data.error || 'Could not create user.');
+      return;
+    }
+
+    await refreshAdminData();
+    setStatus(`Created user ${userInput.fullName}.`);
+  }
+
+  async function assignUserToAccount(userId, accountId) {
+    if (!userId || !accountId) return;
+
+    if (mode !== 'live') {
+      setAccountUsers((current) => {
+        if (current.some((item) => item.user_id === userId && item.account_id === accountId)) return current;
+        return [...current, { user_id: userId, account_id: accountId }];
+      });
+      setStatus('User assigned to account.');
+      return;
+    }
+
+    const { error } = await supabase.from('account_users').upsert({ user_id: userId, account_id: accountId });
+
+    if (error) {
+      setStatus(error.message);
+      return;
+    }
+
+    await refreshAdminData();
+    setStatus('User assigned to account.');
   }
 
   useEffect(() => {
@@ -497,6 +641,12 @@ function Dashboard({ mode, session }) {
             <Users size={17} />
             ID mappings
           </a>
+          {canManage && (
+            <a href="#manage">
+              <ShieldCheck size={17} />
+              Manage
+            </a>
+          )}
         </nav>
 
         <div className="user-panel">
@@ -563,6 +713,18 @@ function Dashboard({ mode, session }) {
           <UploadPanel canUpload={canUpload} onUpload={handleFileUpload} loading={loading} progress={importProgress} />
           <MappingPanel canEdit={canUpload} mappings={mappings} accountId={activeAccountId} onSave={saveMapping} />
         </section>
+
+        {canManage && (
+          <AdminPanel
+            accounts={accounts}
+            users={adminUsers}
+            memberships={accountUsers}
+            onCreateAccount={createAccount}
+            onRenameAccount={renameAccount}
+            onCreateUser={createUser}
+            onAssignUser={assignUserToAccount}
+          />
+        )}
       </section>
     </main>
   );
@@ -861,6 +1023,223 @@ function MappingPanel({ canEdit, mappings, accountId, onSave }) {
           </div>
         ))}
         {!accountMappings.length && <p className="muted">No mappings for this account yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+function AdminPanel({ accounts, users, memberships, onCreateAccount, onRenameAccount, onCreateUser, onAssignUser }) {
+  const [accountName, setAccountName] = useState('');
+  const [renameAccountId, setRenameAccountId] = useState(accounts[0]?.id || '');
+  const [renameValue, setRenameValue] = useState(accounts[0]?.name || '');
+  const [userForm, setUserForm] = useState({
+    fullName: '',
+    email: '',
+    password: '',
+    role: 'user',
+    accountIds: [],
+  });
+  const [assignUserId, setAssignUserId] = useState('');
+  const [assignAccountId, setAssignAccountId] = useState(accounts[0]?.id || '');
+
+  useEffect(() => {
+    if (!renameAccountId && accounts[0]) {
+      setRenameAccountId(accounts[0].id);
+      setRenameValue(accounts[0].name);
+    }
+
+    if (!assignAccountId && accounts[0]) {
+      setAssignAccountId(accounts[0].id);
+    }
+  }, [accounts, renameAccountId, assignAccountId]);
+
+  function submitCreateAccount(event) {
+    event.preventDefault();
+    onCreateAccount(accountName);
+    setAccountName('');
+  }
+
+  function submitRenameAccount(event) {
+    event.preventDefault();
+    onRenameAccount(renameAccountId, renameValue);
+  }
+
+  function submitCreateUser(event) {
+    event.preventDefault();
+    onCreateUser(userForm);
+    setUserForm({ fullName: '', email: '', password: '', role: 'user', accountIds: [] });
+  }
+
+  function submitAssignUser(event) {
+    event.preventDefault();
+    onAssignUser(assignUserId, assignAccountId);
+  }
+
+  return (
+    <section className="panel admin-panel" id="manage">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Admin tools</p>
+          <h2>Manage accounts and users</h2>
+        </div>
+        <ShieldCheck size={18} />
+      </div>
+
+      <div className="admin-grid">
+        <form className="admin-card" onSubmit={submitCreateAccount}>
+          <h3>Add account</h3>
+          <label>
+            Account name
+            <input value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="Example: BES Kolkata" required />
+          </label>
+          <button className="primary-button" type="submit">
+            Add account
+          </button>
+        </form>
+
+        <form className="admin-card" onSubmit={submitRenameAccount}>
+          <h3>Rename account</h3>
+          <label>
+            Select account
+            <select
+              value={renameAccountId}
+              onChange={(event) => {
+                const account = accounts.find((item) => item.id === event.target.value);
+                setRenameAccountId(event.target.value);
+                setRenameValue(account?.name || '');
+              }}
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            New account name
+            <input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} required />
+          </label>
+          <button className="primary-button" type="submit">
+            Rename account
+          </button>
+        </form>
+
+        <form className="admin-card wide" onSubmit={submitCreateUser}>
+          <h3>Add user</h3>
+          <div className="form-grid">
+            <label>
+              Full name
+              <input
+                value={userForm.fullName}
+                onChange={(event) => setUserForm((current) => ({ ...current, fullName: event.target.value }))}
+                placeholder="Example: Argha"
+                required
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={userForm.email}
+                onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
+                placeholder="name@company.com"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={userForm.password}
+                onChange={(event) => setUserForm((current) => ({ ...current, password: event.target.value }))}
+                minLength="6"
+                required
+              />
+            </label>
+            <label>
+              Role
+              <select value={userForm.role} onChange={(event) => setUserForm((current) => ({ ...current, role: event.target.value }))}>
+                <option value="user">User</option>
+                <option value="subadmin">Subadmin</option>
+              </select>
+            </label>
+          </div>
+          <fieldset className="account-checks">
+            <legend>Account access</legend>
+            {accounts.map((account) => (
+              <label key={account.id} className="check-row">
+                <input
+                  type="checkbox"
+                  checked={userForm.accountIds.includes(account.id)}
+                  onChange={(event) =>
+                    setUserForm((current) => ({
+                      ...current,
+                      accountIds: event.target.checked
+                        ? [...current.accountIds, account.id]
+                        : current.accountIds.filter((accountId) => accountId !== account.id),
+                    }))
+                  }
+                />
+                {account.name}
+              </label>
+            ))}
+          </fieldset>
+          <button className="primary-button" type="submit">
+            Create user
+          </button>
+        </form>
+
+        <form className="admin-card" onSubmit={submitAssignUser}>
+          <h3>Assign existing user</h3>
+          <label>
+            User
+            <select value={assignUserId} onChange={(event) => setAssignUserId(event.target.value)} required>
+              <option value="">Select user</option>
+              {users.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.full_name} ({user.role})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Account
+            <select value={assignAccountId} onChange={(event) => setAssignAccountId(event.target.value)} required>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="primary-button" type="submit">
+            Assign access
+          </button>
+        </form>
+
+        <div className="admin-card wide">
+          <h3>Current access</h3>
+          <div className="access-list">
+            {users.map((user) => {
+              const userAccounts = memberships
+                .filter((membership) => membership.user_id === user.id)
+                .map((membership) => accounts.find((account) => account.id === membership.account_id)?.name)
+                .filter(Boolean);
+
+              return (
+                <div className="access-item" key={user.id}>
+                  <div>
+                    <strong>{user.full_name}</strong>
+                    <span>{user.role}</span>
+                  </div>
+                  <p>{userAccounts.length ? userAccounts.join(', ') : 'No account access yet'}</p>
+                </div>
+              );
+            })}
+            {!users.length && <p className="muted">No users found yet.</p>}
+          </div>
+        </div>
       </div>
     </section>
   );

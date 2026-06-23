@@ -634,6 +634,104 @@ th:nth-child(7) {
   font-weight: 850;
 }
 
+.admin-panel {
+  margin-top: 18px;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.admin-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  border: 1px solid #e2e8f1;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fbfdff;
+}
+
+.admin-card.wide {
+  grid-column: 1 / -1;
+}
+
+.admin-card h3 {
+  margin: 0;
+  color: #243044;
+  font-size: 16px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.account-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 0;
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.account-checks legend {
+  padding: 0 6px;
+  color: #4d5c72;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.check-row {
+  display: flex;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  color: #243044;
+}
+
+.check-row input {
+  width: auto;
+}
+
+.access-list {
+  display: grid;
+  gap: 10px;
+}
+
+.access-item {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 16px;
+  border: 1px solid #e5ebf3;
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.access-item strong,
+.access-item span {
+  display: block;
+}
+
+.access-item span {
+  color: #69778c;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.access-item p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.5;
+}
+
 @media (max-width: 1100px) {
   .app-shell,
   .auth-layout,
@@ -658,7 +756,14 @@ th:nth-child(7) {
     grid-column: 1 / -1;
   }
 
-  .mapping-form {
+  .mapping-form,
+  .admin-grid,
+  .form-grid,
+  .access-item {
+    grid-template-columns: 1fr;
+  }
+
+  .account-checks {
     grid-template-columns: 1fr;
   }
 }
