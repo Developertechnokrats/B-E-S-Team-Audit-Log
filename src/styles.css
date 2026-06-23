@@ -412,8 +412,9 @@ h2 {
 
 table {
   width: 100%;
-  min-width: 900px;
+  min-width: 1320px;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 th,
@@ -432,6 +433,7 @@ th {
 
 td {
   color: #243044;
+  vertical-align: top;
 }
 
 td strong {
@@ -450,6 +452,40 @@ tr:last-child td {
   background: #e8f1ff;
   font-size: 12px;
   font-weight: 900;
+}
+
+th:nth-child(1),
+td:nth-child(1) {
+  width: 180px;
+}
+
+th:nth-child(2),
+td:nth-child(2) {
+  width: 260px;
+}
+
+th:nth-child(3),
+td:nth-child(3),
+th:nth-child(4),
+td:nth-child(4) {
+  width: 150px;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
+  width: 190px;
+}
+
+th:nth-child(6),
+td:nth-child(6) {
+  width: 180px;
+}
+
+.details-cell {
+  min-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .empty-cell {

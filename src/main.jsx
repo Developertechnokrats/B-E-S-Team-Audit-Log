@@ -663,9 +663,9 @@ function ActivityTable({ rows, loading }) {
             <th>Document Name</th>
             <th>Module</th>
             <th>Action</th>
-            <th>Details</th>
-            <th>Modified By</th>
+            <th>Modified By (Id)</th>
             <th>Date & Time</th>
+            <th>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -685,12 +685,12 @@ function ActivityTable({ rows, loading }) {
                 <td>
                   <span className="action-chip">{row.action}</span>
                 </td>
-                <td className="details-cell">{row.details || '-'}</td>
                 <td>
                   <strong>{row.modified_by_name}</strong>
                   <span className="subtle">{row.modified_by_id}</span>
                 </td>
                 <td>{formatDateTime(row.modified_at)}</td>
+                <td className="details-cell">{row.details || '-'}</td>
               </tr>
             ))}
           {!loading && !rows.length && (
