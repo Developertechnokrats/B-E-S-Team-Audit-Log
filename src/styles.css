@@ -234,7 +234,7 @@ select:focus {
 
 .brand-line,
 .user-panel,
-.side-nav a,
+.side-nav button,
 .select-wrap,
 .role-pill,
 .filter-title {
@@ -293,17 +293,25 @@ select:focus {
   gap: 8px;
 }
 
-.side-nav a {
+.side-nav button {
   gap: 10px;
+  border: 0;
   border-radius: 8px;
   padding: 11px 12px;
   color: #2f3c4f;
+  background: transparent;
   text-decoration: none;
   font-weight: 800;
+  text-align: left;
 }
 
-.side-nav a:hover {
+.side-nav button:hover,
+.side-nav button.active {
   background: #f0f4fa;
+}
+
+.side-nav button.active {
+  color: #153f77;
 }
 
 .user-panel {
@@ -315,6 +323,7 @@ select:focus {
 .workspace {
   min-width: 0;
   padding: 28px;
+  background: #f5f7fb;
 }
 
 .topbar,
@@ -535,6 +544,81 @@ th:nth-child(7) {
   overflow-wrap: anywhere;
   line-height: 1.45;
   color: #334155;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cfd8e6;
+  border-radius: 8px;
+  color: #24415f;
+  background: #ffffff;
+}
+
+.icon-button:hover {
+  border-color: #9fb1ca;
+  background: #f4f7fb;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.details-modal {
+  width: min(840px, 100%);
+  max-height: min(720px, 90vh);
+  overflow: hidden;
+  border: 1px solid #d7e2f1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #e5ebf3;
+  padding: 18px;
+}
+
+.detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+
+.detail-summary span {
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #24415f;
+  background: #edf4ff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.json-preview {
+  max-height: 520px;
+  overflow: auto;
+  margin: 18px;
+  border: 1px solid #e2e8f1;
+  border-radius: 8px;
+  padding: 16px;
+  color: #172033;
+  background: #f8fafc;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .empty-cell {

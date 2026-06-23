@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   Database,
+  Eye,
   FileSpreadsheet,
   Filter,
   Lock,
@@ -15,6 +16,7 @@ import {
   Upload,
   UserRound,
   Users,
+  X,
 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 import './styles.css';
@@ -212,6 +214,8 @@ function Dashboard({ mode, session }) {
   const [totalRows, setTotalRows] = useState(mode === 'demo' ? demoRows.filter((row) => row.account_id === demoAccounts[0].id).length : 0);
   const [status, setStatus] = useState(mode === 'demo' ? 'Demo mode: add Supabase env vars to use live data.' : '');
   const [importProgress, setImportProgress] = useState(null);
+  const [activeView, setActiveView] = useState('activity');
+  const [detailsRecord, setDetailsRecord] = useState(null);
   const [loading, setLoading] = useState(false);
   const latestActivityRequest = useRef(0);
 
@@ -668,23 +672,23 @@ function Dashboard({ mode, session }) {
         </label>
 
         <nav className="side-nav">
-          <a href="#activity">
+          <button type="button" className={activeView === 'activity' ? 'active' : ''} onClick={() => setActiveView('activity')}>
             <FileSpreadsheet size={17} />
             Activity
-          </a>
-          <a href="#upload">
+          </button>
+          <button type="button" className={activeView === 'upload' ? 'active' : ''} onClick={() => setActiveView('upload')}>
             <Upload size={17} />
             Upload
-          </a>
-          <a href="#mappings">
+          </button>
+          <button type="button" className={activeView === 'mappings' ? 'active' : ''} onClick={() => setActiveView('mappings')}>
             <Users size={17} />
             ID mappings
-          </a>
+          </button>
           {canManage && (
-            <a href="#manage">
+            <button type="button" className={activeView === 'manage' ? 'active' : ''} onClick={() => setActiveView('manage')}>
               <ShieldCheck size={17} />
               Manage
-            </a>
+            </button>
           )}
         </nav>
 
@@ -718,42 +722,49 @@ function Dashboard({ mode, session }) {
 
         {status && <div className="status-banner">{status}</div>}
 
-        <section className="stats-grid">
-          <Stat label="Rows" value={formatNumber(totalRows)} />
-          <Stat label="Modules" value={filterOptions.modules.length || stats.modules} />
-          <Stat label="Users mapped" value={stats.people} />
-          <Stat label="Last activity" value={stats.lastActivity} />
-        </section>
+        {activeView === 'activity' && (
+          <>
+            <section className="stats-grid">
+              <Stat label="Rows" value={formatNumber(totalRows)} />
+              <Stat label="Modules" value={filterOptions.modules.length || stats.modules} />
+              <Stat label="Users mapped" value={stats.people} />
+              <Stat label="Last activity" value={stats.lastActivity} />
+            </section>
 
-        <section className="panel" id="activity">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Document data</p>
-              <h2>Activity records</h2>
-            </div>
-            <button className="ghost-button compact" type="button" onClick={() => setFilters(emptyFilters())}>
-              Clear filters
-            </button>
-          </div>
+            <section className="panel activity-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Document data</p>
+                  <h2>Activity records</h2>
+                </div>
+                <button className="ghost-button compact" type="button" onClick={() => setFilters(emptyFilters())}>
+                  Clear filters
+                </button>
+              </div>
 
-          <Filters filters={filters} setFilters={setFilters} options={filterOptions} />
-          <ActivityTable rows={mappedRows} loading={loading} />
-          <Pagination
-            page={page}
-            pageSize={pageSize}
-            totalRows={totalRows}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
-        </section>
+              <Filters filters={filters} setFilters={setFilters} options={filterOptions} />
+              <ActivityTable rows={mappedRows} loading={loading} onViewDetails={setDetailsRecord} />
+              <Pagination
+                page={page}
+                pageSize={pageSize}
+                totalRows={totalRows}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            </section>
+          </>
+        )}
 
-        <section className="two-column">
+        {activeView === 'upload' && (
           <UploadPanel canUpload={canUpload} onUpload={handleFileUpload} loading={loading} progress={importProgress} />
-          <MappingPanel canEdit={canUpload} mappings={mappings} accountId={activeAccountId} onSave={saveMapping} />
-        </section>
+        )}
 
-        {canManage && (
+        {activeView === 'mappings' && (
+          <MappingPanel canEdit={canUpload} mappings={mappings} accountId={activeAccountId} onSave={saveMapping} />
+        )}
+
+        {activeView === 'manage' && canManage && (
           <AdminPanel
             accounts={accounts}
             users={adminUsers}
@@ -764,6 +775,8 @@ function Dashboard({ mode, session }) {
             onAssignUser={assignUserToAccount}
           />
         )}
+
+        {detailsRecord && <DetailsModal record={detailsRecord} onClose={() => setDetailsRecord(null)} />}
       </section>
     </main>
   );
@@ -854,7 +867,7 @@ function Filters({ filters, setFilters, options }) {
   );
 }
 
-function ActivityTable({ rows, loading }) {
+function ActivityTable({ rows, loading, onViewDetails }) {
   return (
     <div className={`table-wrap ${loading ? 'is-loading' : ''}`}>
       <table>
@@ -894,7 +907,15 @@ function ActivityTable({ rows, loading }) {
                   </span>
                 </td>
                 <td className="date-cell">{formatDateTime(row.modified_at)}</td>
-                <td className="details-cell">{row.details || '-'}</td>
+                <td className="details-cell">
+                  {row.details ? (
+                    <button className="icon-button" type="button" title="View details" onClick={() => onViewDetails(row)}>
+                      <Eye size={16} />
+                    </button>
+                  ) : (
+                    <span className="muted">No details</span>
+                  )}
+                </td>
               </tr>
             ))}
           {!loading && !rows.length && (
@@ -907,6 +928,34 @@ function ActivityTable({ rows, loading }) {
         </tbody>
       </table>
       {loading && rows.length > 0 && <div className="table-loading-badge">Updating results...</div>}
+    </div>
+  );
+}
+
+function DetailsModal({ record, onClose }) {
+  const prettyDetails = formatDetails(record.details);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="details-modal" role="dialog" aria-modal="true" aria-label="Activity details" onClick={(event) => event.stopPropagation()}>
+        <header className="modal-header">
+          <div>
+            <p className="eyebrow">Activity details</p>
+            <h2>{record.document_name || record.document_id}</h2>
+          </div>
+          <button className="icon-button" type="button" title="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="detail-summary">
+          <span>{record.module}</span>
+          <span>{record.action}</span>
+          <span>{formatDateTime(record.modified_at)}</span>
+        </div>
+
+        <pre className="json-preview">{prettyDetails}</pre>
+      </section>
     </div>
   );
 }
@@ -1572,6 +1621,18 @@ function formatShortDate(value) {
 
 function formatNumber(value) {
   return new Intl.NumberFormat().format(value || 0);
+}
+
+function formatDetails(value) {
+  if (!value) {
+    return 'No details available.';
+  }
+
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 createRoot(document.getElementById('root')).render(<App />);
