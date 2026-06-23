@@ -21,7 +21,7 @@ import './styles.css';
 
 const requiredHeaders = ['Document ID', 'Document Name', 'Module', 'Action', 'Modified By (Id)', 'Date & Time', 'Details'];
 const INSERT_BATCH_SIZE = 1000;
-const DEFAULT_PAGE_SIZE = 1000;
+const DEFAULT_PAGE_SIZE = 100;
 
 const demoAccounts = [
   { id: 'acc-north', name: 'Northwind Legal' },
@@ -197,17 +197,17 @@ function AuthScreen() {
 
 function Dashboard({ mode, session }) {
   const [profile, setProfile] = useState(demoProfile);
-  const [accounts, setAccounts] = useState(demoAccounts);
-  const [activeAccountId, setActiveAccountId] = useState(demoAccounts[0].id);
-  const [rows, setRows] = useState(demoRows);
-  const [mappings, setMappings] = useState(demoMappings);
+  const [accounts, setAccounts] = useState(mode === 'demo' ? demoAccounts : []);
+  const [activeAccountId, setActiveAccountId] = useState(mode === 'demo' ? demoAccounts[0].id : '');
+  const [rows, setRows] = useState(mode === 'demo' ? demoRows : []);
+  const [mappings, setMappings] = useState(mode === 'demo' ? demoMappings : []);
   const [filters, setFilters] = useState(emptyFilters());
   const [filterOptions, setFilterOptions] = useState({ modules: [], actions: [] });
   const [adminUsers, setAdminUsers] = useState([]);
   const [accountUsers, setAccountUsers] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const [totalRows, setTotalRows] = useState(demoRows.filter((row) => row.account_id === demoAccounts[0].id).length);
+  const [totalRows, setTotalRows] = useState(mode === 'demo' ? demoRows.filter((row) => row.account_id === demoAccounts[0].id).length : 0);
   const [status, setStatus] = useState(mode === 'demo' ? 'Demo mode: add Supabase env vars to use live data.' : '');
   const [importProgress, setImportProgress] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -251,7 +251,13 @@ function Dashboard({ mode, session }) {
 
     setProfile(profileData);
     setAccounts(accountData || []);
-    setActiveAccountId((accountData && accountData[0]?.id) || '');
+    setActiveAccountId((currentAccountId) => {
+      if (accountData?.some((account) => account.id === currentAccountId)) {
+        return currentAccountId;
+      }
+
+      return (accountData && accountData[0]?.id) || '';
+    });
     setLoading(false);
   }
 
@@ -268,6 +274,13 @@ function Dashboard({ mode, session }) {
     }
 
     setAccounts(data || []);
+    setActiveAccountId((currentAccountId) => {
+      if (data?.some((account) => account.id === currentAccountId)) {
+        return currentAccountId;
+      }
+
+      return data?.[0]?.id || '';
+    });
   }
 
   async function refreshAdminData() {
@@ -398,6 +411,7 @@ function Dashboard({ mode, session }) {
 
   useEffect(() => {
     if (!activeAccountId) return;
+    if (mode === 'live' && !isUuid(activeAccountId)) return;
     refreshAccountData(activeAccountId);
     // refreshAccountData intentionally reads the current filters and pagination state.
     // Rebuilding it as a callback here makes the data-flow harder to follow.
@@ -445,6 +459,7 @@ function Dashboard({ mode, session }) {
       setMappings(mappingData || []);
       setTotalRows(count || 0);
       setFilterOptions(optionsResult);
+      setStatus('');
     }
 
     setLoading(false);
@@ -895,6 +910,7 @@ function Pagination({ page, pageSize, totalRows, totalPages, onPageChange, onPag
               onPageChange(1);
             }}
           >
+            <option value="100">100</option>
             <option value="250">250</option>
             <option value="500">500</option>
             <option value="1000">1000</option>
@@ -1043,15 +1059,19 @@ function AdminPanel({ accounts, users, memberships, onCreateAccount, onRenameAcc
   const [assignAccountId, setAssignAccountId] = useState(accounts[0]?.id || '');
 
   useEffect(() => {
-    if (!renameAccountId && accounts[0]) {
+    const selectedRenameAccount = accounts.find((account) => account.id === renameAccountId);
+
+    if (!selectedRenameAccount && accounts[0]) {
       setRenameAccountId(accounts[0].id);
       setRenameValue(accounts[0].name);
+    } else if (selectedRenameAccount && renameValue === '') {
+      setRenameValue(selectedRenameAccount.name);
     }
 
-    if (!assignAccountId && accounts[0]) {
+    if (!accounts.some((account) => account.id === assignAccountId) && accounts[0]) {
       setAssignAccountId(accounts[0].id);
     }
-  }, [accounts, renameAccountId, assignAccountId]);
+  }, [accounts, renameAccountId, renameValue, assignAccountId]);
 
   function submitCreateAccount(event) {
     event.preventDefault();
@@ -1313,7 +1333,7 @@ function applyServerFilters(query, filters) {
   }
 
   if (filters.modifiedBy.trim()) {
-    const term = escapeLike(filters.modifiedBy.trim());
+    const term = sanitizeOrFilterValue(filters.modifiedBy.trim());
     nextQuery = nextQuery.or(`modified_by_id.ilike.%${term}%,modified_by_name.ilike.%${term}%`);
   }
 
@@ -1489,6 +1509,14 @@ function normalizeUploadRow(row, index, accountId) {
 
 function escapeLike(value) {
   return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+}
+
+function sanitizeOrFilterValue(value) {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_').replaceAll(',', '\\,');
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function parseUploadDate(value) {
