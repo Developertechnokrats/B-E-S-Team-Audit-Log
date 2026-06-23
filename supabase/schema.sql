@@ -269,12 +269,13 @@ as $$
     and public.can_access_account(target_account_id)
     and (p_document_id is null or da.document_id ilike '%' || p_document_id || '%')
     and (p_document_name is null or da.document_name ilike '%' || p_document_name || '%')
-    and (p_module is null or da.module = p_module)
-    and (p_action is null or da.action = p_action)
+    and (p_module is null or lower(trim(da.module)) = lower(trim(p_module)))
+    and (p_action is null or lower(trim(da.action)) = lower(trim(p_action)))
     and (
       p_modified_by is null
-      or da.modified_by_id ilike '%' || p_modified_by || '%'
-      or coalesce(mm.display_name, '') ilike '%' || p_modified_by || '%'
+      or lower(trim(da.modified_by_id)) like '%' || lower(trim(p_modified_by)) || '%'
+      or lower(trim(coalesce(mm.display_name, ''))) like '%' || lower(trim(p_modified_by)) || '%'
+      or lower(trim(coalesce(mm.display_name, da.modified_by_id))) like '%' || lower(trim(p_modified_by)) || '%'
     )
     and (p_from is null or da.modified_at >= p_from)
     and (p_to is null or da.modified_at <= p_to)
@@ -310,12 +311,13 @@ as $$
     and public.can_access_account(target_account_id)
     and (p_document_id is null or da.document_id ilike '%' || p_document_id || '%')
     and (p_document_name is null or da.document_name ilike '%' || p_document_name || '%')
-    and (p_module is null or da.module = p_module)
-    and (p_action is null or da.action = p_action)
+    and (p_module is null or lower(trim(da.module)) = lower(trim(p_module)))
+    and (p_action is null or lower(trim(da.action)) = lower(trim(p_action)))
     and (
       p_modified_by is null
-      or da.modified_by_id ilike '%' || p_modified_by || '%'
-      or coalesce(mm.display_name, '') ilike '%' || p_modified_by || '%'
+      or lower(trim(da.modified_by_id)) like '%' || lower(trim(p_modified_by)) || '%'
+      or lower(trim(coalesce(mm.display_name, ''))) like '%' || lower(trim(p_modified_by)) || '%'
+      or lower(trim(coalesce(mm.display_name, da.modified_by_id))) like '%' || lower(trim(p_modified_by)) || '%'
     )
     and (p_from is null or da.modified_at >= p_from)
     and (p_to is null or da.modified_at <= p_to);

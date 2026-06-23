@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import Papa from 'papaparse';
 import readXlsxFile from 'read-excel-file';
@@ -24,7 +24,7 @@ const INSERT_BATCH_SIZE = 1000;
 const DEFAULT_PAGE_SIZE = 100;
 
 const demoAccounts = [
-  { id: 'acc-north', name: 'Northwind Legal' },
+  { id: 'acc-north', name: 'B-E-S-Team Audit Log' },
   { id: 'acc-apex', name: 'Apex Finance' },
   { id: 'acc-orbit', name: 'Orbit Health' },
 ];
@@ -79,6 +79,8 @@ const demoMappings = [
   { id: 'map-2', account_id: 'acc-north', modified_by_id: 'U311', display_name: 'Rohan Mehta' },
   { id: 'map-3', account_id: 'acc-apex', modified_by_id: 'F044', display_name: 'Anika Rao' },
 ];
+
+const hiddenAccountNames = new Set(['BES Main Account']);
 
 function App() {
   const [session, setSession] = useState(null);
@@ -211,10 +213,12 @@ function Dashboard({ mode, session }) {
   const [status, setStatus] = useState(mode === 'demo' ? 'Demo mode: add Supabase env vars to use live data.' : '');
   const [importProgress, setImportProgress] = useState(null);
   const [loading, setLoading] = useState(false);
+  const latestActivityRequest = useRef(0);
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId);
   const canUpload = profile.role === 'admin';
   const canManage = profile.role === 'admin';
+  const debouncedFilters = useDebouncedValue(filters, 350);
 
   useEffect(() => {
     setPage(1);
@@ -250,13 +254,14 @@ function Dashboard({ mode, session }) {
     }
 
     setProfile(profileData);
-    setAccounts(accountData || []);
+    const visibleAccounts = getVisibleAccounts(accountData || []);
+    setAccounts(visibleAccounts);
     setActiveAccountId((currentAccountId) => {
-      if (accountData?.some((account) => account.id === currentAccountId)) {
+      if (visibleAccounts.some((account) => account.id === currentAccountId)) {
         return currentAccountId;
       }
 
-      return (accountData && accountData[0]?.id) || '';
+      return visibleAccounts[0]?.id || '';
     });
     setLoading(false);
   }
@@ -273,13 +278,14 @@ function Dashboard({ mode, session }) {
       return;
     }
 
-    setAccounts(data || []);
+    const visibleAccounts = getVisibleAccounts(data || []);
+    setAccounts(visibleAccounts);
     setActiveAccountId((currentAccountId) => {
-      if (data?.some((account) => account.id === currentAccountId)) {
+      if (visibleAccounts.some((account) => account.id === currentAccountId)) {
         return currentAccountId;
       }
 
-      return data?.[0]?.id || '';
+      return visibleAccounts[0]?.id || '';
     });
   }
 
@@ -416,14 +422,16 @@ function Dashboard({ mode, session }) {
     // refreshAccountData intentionally reads the current filters and pagination state.
     // Rebuilding it as a callback here makes the data-flow harder to follow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, activeAccountId, filters, page, pageSize]);
+  }, [mode, activeAccountId, debouncedFilters, page, pageSize]);
 
-  async function refreshAccountData(accountId) {
+  async function refreshAccountData(accountId, activeFilters = debouncedFilters) {
+    const requestId = latestActivityRequest.current + 1;
+    latestActivityRequest.current = requestId;
     setLoading(true);
 
     if (mode !== 'live') {
       const demoAccountRows = demoRows.filter((row) => row.account_id === accountId);
-      const filteredDemoRows = filterRows(applyMappings(demoAccountRows, mappings), filters);
+      const filteredDemoRows = filterRows(applyMappings(demoAccountRows, mappings), activeFilters);
       const start = (page - 1) * pageSize;
       setRows(filteredDemoRows.slice(start, start + pageSize));
       setTotalRows(filteredDemoRows.length);
@@ -435,7 +443,7 @@ function Dashboard({ mode, session }) {
       return;
     }
 
-    const searchParams = getSearchParams(accountId, filters, page, pageSize);
+    const searchParams = getSearchParams(accountId, activeFilters, page, pageSize);
 
     const [
       { data: rowData, error: rowError },
@@ -449,10 +457,15 @@ function Dashboard({ mode, session }) {
       loadFilterOptions(accountId),
     ]);
 
+    if (requestId !== latestActivityRequest.current) {
+      return;
+    }
+
     if (rowError || countError || mappingError) {
       setStatus(rowError?.message || countError?.message || mappingError?.message);
     } else {
-      setRows(rowData || []);
+      const guardedRows = filterRows(rowData || [], activeFilters);
+      setRows(guardedRows);
       setMappings(mappingData || []);
       setTotalRows(countData || 0);
       setFilterOptions(optionsResult);
@@ -620,8 +633,8 @@ function Dashboard({ mode, session }) {
             <Database size={19} />
           </div>
           <div>
-            <strong>Activity Hub</strong>
-            <span>{mode === 'demo' ? 'Demo workspace' : 'Supabase workspace'}</span>
+            <strong>Audit Pannel</strong>
+            <span>Account audit logs</span>
           </div>
         </div>
 
@@ -829,7 +842,7 @@ function Filters({ filters, setFilters, options }) {
 
 function ActivityTable({ rows, loading }) {
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${loading ? 'is-loading' : ''}`}>
       <table>
         <thead>
           <tr>
@@ -843,15 +856,14 @@ function ActivityTable({ rows, loading }) {
           </tr>
         </thead>
         <tbody>
-          {loading && (
+          {loading && !rows.length && (
             <tr>
               <td colSpan="7" className="empty-cell">
                 Loading records...
               </td>
             </tr>
           )}
-          {!loading &&
-            rows.map((row) => (
+          {rows.map((row) => (
               <tr key={row.id}>
                 <td className="id-cell" title={row.document_id}>
                   {row.document_id}
@@ -880,6 +892,7 @@ function ActivityTable({ rows, loading }) {
           )}
         </tbody>
       </table>
+      {loading && rows.length > 0 && <div className="table-loading-badge">Updating results...</div>}
     </div>
   );
 }
@@ -1299,8 +1312,8 @@ function filterRows(rows, filters) {
     const textPass = Object.entries(searchable).every(([key, value]) =>
       value.toLowerCase().includes(filters[key].trim().toLowerCase()),
     );
-    const modulePass = filters.module ? row.module === filters.module : true;
-    const actionPass = filters.action ? row.action === filters.action : true;
+    const modulePass = filters.module ? normalizeFilterText(row.module) === normalizeFilterText(filters.module) : true;
+    const actionPass = filters.action ? normalizeFilterText(row.action) === normalizeFilterText(filters.action) : true;
 
     const rowDate = new Date(row.modified_at);
     const fromPass = filters.from ? rowDate >= new Date(`${filters.from}T00:00:00`) : true;
@@ -1489,8 +1502,30 @@ function cleanFilterValue(value) {
   return nextValue || null;
 }
 
+function normalizeFilterText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getVisibleAccounts(accounts) {
+  return accounts.filter((account) => !hiddenAccountNames.has(account.name));
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function useDebouncedValue(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [value, delay]);
+
+  return debouncedValue;
 }
 
 function parseUploadDate(value) {

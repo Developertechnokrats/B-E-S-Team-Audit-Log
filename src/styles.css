@@ -405,10 +405,32 @@ h2 {
 }
 
 .table-wrap {
+  position: relative;
   overflow: auto;
   border: 1px solid #e1e7f0;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.table-wrap.is-loading table {
+  opacity: 0.62;
+}
+
+.table-loading-badge {
+  position: sticky;
+  left: 50%;
+  bottom: 14px;
+  z-index: 2;
+  width: fit-content;
+  margin: -48px auto 12px;
+  border: 1px solid #cbd8ea;
+  border-radius: 999px;
+  padding: 8px 14px;
+  color: #24415f;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(23, 32, 51, 0.12);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 table {
