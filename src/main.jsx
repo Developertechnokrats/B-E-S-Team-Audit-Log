@@ -19,9 +19,9 @@ import {
 import { isSupabaseConfigured, supabase } from './supabaseClient';
 import './styles.css';
 
-const requiredHeaders = ['Document ID', 'Document Name', 'Module', 'Action', 'Modified By (Id)', 'Date & Time'];
+const requiredHeaders = ['Document ID', 'Document Name', 'Module', 'Action', 'Modified By (Id)', 'Date & Time', 'Details'];
 const INSERT_BATCH_SIZE = 1000;
-const DASHBOARD_ROW_LIMIT = 1000;
+const DEFAULT_PAGE_SIZE = 1000;
 
 const demoAccounts = [
   { id: 'acc-north', name: 'Northwind Legal' },
@@ -43,6 +43,7 @@ const demoRows = [
     document_name: 'Vendor Contract',
     module: 'Contracts',
     action: 'Updated',
+    details: 'Clause text changed',
     modified_by_id: 'U102',
     modified_by_name: 'Priya Sharma',
     modified_at: '2026-06-19T10:32:00+05:30',
@@ -54,6 +55,7 @@ const demoRows = [
     document_name: 'Board Minutes',
     module: 'Governance',
     action: 'Viewed',
+    details: 'Opened from dashboard',
     modified_by_id: 'U311',
     modified_by_name: 'Rohan Mehta',
     modified_at: '2026-06-20T16:14:00+05:30',
@@ -65,6 +67,7 @@ const demoRows = [
     document_name: 'Q2 Forecast',
     module: 'Planning',
     action: 'Approved',
+    details: 'Approved by finance lead',
     modified_by_id: 'F044',
     modified_by_name: 'Anika Rao',
     modified_at: '2026-06-21T09:05:00+05:30',
@@ -199,12 +202,20 @@ function Dashboard({ mode, session }) {
   const [rows, setRows] = useState(demoRows);
   const [mappings, setMappings] = useState(demoMappings);
   const [filters, setFilters] = useState(emptyFilters());
+  const [filterOptions, setFilterOptions] = useState({ modules: [], actions: [] });
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalRows, setTotalRows] = useState(demoRows.filter((row) => row.account_id === demoAccounts[0].id).length);
   const [status, setStatus] = useState(mode === 'demo' ? 'Demo mode: add Supabase env vars to use live data.' : '');
   const [importProgress, setImportProgress] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId);
   const canUpload = profile.role === 'admin';
+
+  useEffect(() => {
+    setPage(1);
+  }, [activeAccountId, filters]);
 
   useEffect(() => {
     if (mode !== 'live' || !session) return;
@@ -242,21 +253,45 @@ function Dashboard({ mode, session }) {
   }
 
   useEffect(() => {
-    if (mode !== 'live' || !activeAccountId) return;
+    if (!activeAccountId) return;
     refreshAccountData(activeAccountId);
-  }, [mode, activeAccountId]);
+    // refreshAccountData intentionally reads the current filters and pagination state.
+    // Rebuilding it as a callback here makes the data-flow harder to follow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, activeAccountId, filters, page, pageSize]);
 
   async function refreshAccountData(accountId) {
     setLoading(true);
 
-    const [{ data: rowData, error: rowError }, { data: mappingData, error: mappingError }] = await Promise.all([
-      supabase
+    if (mode !== 'live') {
+      const demoAccountRows = demoRows.filter((row) => row.account_id === accountId);
+      const filteredDemoRows = filterRows(applyMappings(demoAccountRows, mappings), filters);
+      const start = (page - 1) * pageSize;
+      setRows(filteredDemoRows.slice(start, start + pageSize));
+      setTotalRows(filteredDemoRows.length);
+      setFilterOptions({
+        modules: sortedUnique(demoAccountRows.map((row) => row.module)),
+        actions: sortedUnique(demoAccountRows.map((row) => row.action)),
+      });
+      setLoading(false);
+      return;
+    }
+
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    let rowQuery = supabase
         .from('document_activity_view')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('account_id', accountId)
         .order('modified_at', { ascending: false })
-        .limit(DASHBOARD_ROW_LIMIT),
+        .range(from, to);
+
+    rowQuery = applyServerFilters(rowQuery, filters);
+
+    const [{ data: rowData, error: rowError, count }, { data: mappingData, error: mappingError }, optionsResult] = await Promise.all([
+      rowQuery,
       supabase.from('modifier_mappings').select('*').eq('account_id', accountId).order('modified_by_id'),
+      loadFilterOptions(accountId),
     ]);
 
     if (rowError || mappingError) {
@@ -264,6 +299,8 @@ function Dashboard({ mode, session }) {
     } else {
       setRows(rowData || []);
       setMappings(mappingData || []);
+      setTotalRows(count || 0);
+      setFilterOptions(optionsResult);
     }
 
     setLoading(false);
@@ -271,8 +308,8 @@ function Dashboard({ mode, session }) {
 
   const accountRows = useMemo(() => rows.filter((row) => row.account_id === activeAccountId), [rows, activeAccountId]);
   const mappedRows = useMemo(() => applyMappings(accountRows, mappings), [accountRows, mappings]);
-  const filteredRows = useMemo(() => filterRows(mappedRows, filters), [mappedRows, filters]);
   const stats = useMemo(() => getStats(mappedRows), [mappedRows]);
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
   async function handleFileUpload(file) {
     if (!canUpload || !file || !activeAccountId) return;
@@ -323,18 +360,30 @@ function Dashboard({ mode, session }) {
             uploaded_by: session.user.id,
             file_name: file.name,
             row_count: validRows.length,
+            imported_count: 0,
+            duplicate_count: 0,
           })
           .select('id')
           .single();
 
         if (uploadError) throw uploadError;
 
-        await insertRowsInBatches({
+        const importResult = await insertRowsInBatches({
           rows: validRows,
           uploadId: upload.id,
           fileName: file.name,
           onProgress: setImportProgress,
         });
+
+        const { error: uploadUpdateError } = await supabase
+          .from('uploads')
+          .update({
+            imported_count: importResult.imported,
+            duplicate_count: importResult.duplicates,
+          })
+          .eq('id', upload.id);
+
+        if (uploadUpdateError) throw uploadUpdateError;
 
         await refreshAccountData(activeAccountId);
       } else {
@@ -354,7 +403,7 @@ function Dashboard({ mode, session }) {
         processed: validRows.length,
         total: validRows.length,
         percent: 100,
-        detail: `${formatNumber(validRows.length)} rows imported successfully`,
+        detail: `${formatNumber(validRows.length)} rows processed successfully`,
       });
       setStatus(`Uploaded ${validRows.length} rows to ${activeAccount?.name || 'selected account'}.`);
     } catch (error) {
@@ -483,8 +532,8 @@ function Dashboard({ mode, session }) {
         {status && <div className="status-banner">{status}</div>}
 
         <section className="stats-grid">
-          <Stat label="Rows" value={stats.total} />
-          <Stat label="Modules" value={stats.modules} />
+          <Stat label="Rows" value={formatNumber(totalRows)} />
+          <Stat label="Modules" value={filterOptions.modules.length || stats.modules} />
           <Stat label="Users mapped" value={stats.people} />
           <Stat label="Last activity" value={stats.lastActivity} />
         </section>
@@ -500,8 +549,16 @@ function Dashboard({ mode, session }) {
             </button>
           </div>
 
-          <Filters filters={filters} setFilters={setFilters} />
-          <ActivityTable rows={filteredRows} loading={loading} />
+          <Filters filters={filters} setFilters={setFilters} options={filterOptions} />
+          <ActivityTable rows={mappedRows} loading={loading} />
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalRows={totalRows}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </section>
 
         <section className="two-column">
@@ -522,34 +579,78 @@ function Stat({ label, value }) {
   );
 }
 
-function Filters({ filters, setFilters }) {
-  const fields = [
-    ['documentId', 'Document ID'],
-    ['documentName', 'Document Name'],
-    ['module', 'Module'],
-    ['action', 'Action'],
-    ['modifiedBy', 'Modified By'],
-    ['from', 'From date'],
-    ['to', 'To date'],
-  ];
-
+function Filters({ filters, setFilters, options }) {
   return (
     <div className="filters">
       <div className="filter-title">
         <Filter size={17} />
         Filters
       </div>
-      {fields.map(([key, label]) => (
-        <label key={key}>
-          {label}
-          <input
-            type={key === 'from' || key === 'to' ? 'date' : 'search'}
-            value={filters[key]}
-            onChange={(event) => setFilters((current) => ({ ...current, [key]: event.target.value }))}
-            placeholder={key === 'modifiedBy' ? 'ID or name' : label}
-          />
-        </label>
-      ))}
+      <label>
+        Document ID
+        <input
+          type="search"
+          value={filters.documentId}
+          onChange={(event) => setFilters((current) => ({ ...current, documentId: event.target.value }))}
+          placeholder="Document ID"
+        />
+      </label>
+      <label>
+        Document Name
+        <input
+          type="search"
+          value={filters.documentName}
+          onChange={(event) => setFilters((current) => ({ ...current, documentName: event.target.value }))}
+          placeholder="Document Name"
+        />
+      </label>
+      <label>
+        Module
+        <select value={filters.module} onChange={(event) => setFilters((current) => ({ ...current, module: event.target.value }))}>
+          <option value="">All modules</option>
+          {options.modules.map((module) => (
+            <option key={module} value={module}>
+              {module}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Action
+        <select value={filters.action} onChange={(event) => setFilters((current) => ({ ...current, action: event.target.value }))}>
+          <option value="">All actions</option>
+          {options.actions.map((action) => (
+            <option key={action} value={action}>
+              {action}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Modified By
+        <input
+          type="search"
+          value={filters.modifiedBy}
+          onChange={(event) => setFilters((current) => ({ ...current, modifiedBy: event.target.value }))}
+          placeholder="ID or name"
+        />
+      </label>
+      <label>
+        From date
+        <input
+          type="date"
+          value={filters.from}
+          onChange={(event) => setFilters((current) => ({ ...current, from: event.target.value }))}
+        />
+      </label>
+      <label>
+        To date
+        <input
+          type="date"
+          value={filters.to}
+          onChange={(event) => setFilters((current) => ({ ...current, to: event.target.value }))}
+        />
+      </label>
     </div>
   );
 }
@@ -564,6 +665,7 @@ function ActivityTable({ rows, loading }) {
             <th>Document Name</th>
             <th>Module</th>
             <th>Action</th>
+            <th>Details</th>
             <th>Modified By</th>
             <th>Date & Time</th>
           </tr>
@@ -571,7 +673,7 @@ function ActivityTable({ rows, loading }) {
         <tbody>
           {loading && (
             <tr>
-              <td colSpan="6" className="empty-cell">
+              <td colSpan="7" className="empty-cell">
                 Loading records...
               </td>
             </tr>
@@ -585,6 +687,7 @@ function ActivityTable({ rows, loading }) {
                 <td>
                   <span className="action-chip">{row.action}</span>
                 </td>
+                <td className="details-cell">{row.details || '-'}</td>
                 <td>
                   <strong>{row.modified_by_name}</strong>
                   <span className="subtle">{row.modified_by_id}</span>
@@ -594,13 +697,61 @@ function ActivityTable({ rows, loading }) {
             ))}
           {!loading && !rows.length && (
             <tr>
-              <td colSpan="6" className="empty-cell">
+              <td colSpan="7" className="empty-cell">
                 No records match the current filters.
               </td>
             </tr>
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function Pagination({ page, pageSize, totalRows, totalPages, onPageChange, onPageSizeChange }) {
+  const start = totalRows === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalRows);
+
+  function changePage(nextPage) {
+    onPageChange(Math.min(Math.max(nextPage, 1), totalPages));
+  }
+
+  return (
+    <div className="pagination">
+      <div className="pagination-summary">
+        Showing {formatNumber(start)}-{formatNumber(end)} of {formatNumber(totalRows)} rows
+      </div>
+      <div className="pagination-controls">
+        <label>
+          Rows
+          <select
+            value={pageSize}
+            onChange={(event) => {
+              onPageSizeChange(Number(event.target.value));
+              onPageChange(1);
+            }}
+          >
+            <option value="250">250</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+            <option value="2500">2500</option>
+          </select>
+        </label>
+        <button className="ghost-button compact" type="button" disabled={page <= 1} onClick={() => changePage(page - 1)}>
+          Previous
+        </button>
+        <span>
+          Page {formatNumber(page)} of {formatNumber(totalPages)}
+        </span>
+        <button
+          className="ghost-button compact"
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => changePage(page + 1)}
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -619,7 +770,7 @@ function UploadPanel({ canUpload, onUpload, loading, progress }) {
       <div className={`drop-zone ${!canUpload ? 'disabled' : ''}`}>
         <Upload size={24} />
         <strong>{canUpload ? 'Upload activity file' : 'Upload restricted'}</strong>
-        <p>Accepted headers: Document ID, Document Name, Module, Action, Modified By (Id), Date & Time.</p>
+        <p>Accepted headers: Document ID, Document Name, Module, Action, Modified By (Id), Date & Time, Details.</p>
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
@@ -744,21 +895,76 @@ function filterRows(rows, filters) {
     const searchable = {
       documentId: row.document_id,
       documentName: row.document_name,
-      module: row.module,
-      action: row.action,
       modifiedBy: `${row.modified_by_id} ${row.modified_by_name}`,
     };
 
     const textPass = Object.entries(searchable).every(([key, value]) =>
       value.toLowerCase().includes(filters[key].trim().toLowerCase()),
     );
+    const modulePass = filters.module ? row.module === filters.module : true;
+    const actionPass = filters.action ? row.action === filters.action : true;
 
     const rowDate = new Date(row.modified_at);
     const fromPass = filters.from ? rowDate >= new Date(`${filters.from}T00:00:00`) : true;
     const toPass = filters.to ? rowDate <= new Date(`${filters.to}T23:59:59`) : true;
 
-    return textPass && fromPass && toPass;
+    return textPass && modulePass && actionPass && fromPass && toPass;
   });
+}
+
+function applyServerFilters(query, filters) {
+  let nextQuery = query;
+
+  if (filters.documentId.trim()) {
+    nextQuery = nextQuery.ilike('document_id', `%${escapeLike(filters.documentId.trim())}%`);
+  }
+
+  if (filters.documentName.trim()) {
+    nextQuery = nextQuery.ilike('document_name', `%${escapeLike(filters.documentName.trim())}%`);
+  }
+
+  if (filters.module) {
+    nextQuery = nextQuery.eq('module', filters.module);
+  }
+
+  if (filters.action) {
+    nextQuery = nextQuery.eq('action', filters.action);
+  }
+
+  if (filters.modifiedBy.trim()) {
+    const term = escapeLike(filters.modifiedBy.trim());
+    nextQuery = nextQuery.or(`modified_by_id.ilike.%${term}%,modified_by_name.ilike.%${term}%`);
+  }
+
+  if (filters.from) {
+    nextQuery = nextQuery.gte('modified_at', `${filters.from}T00:00:00`);
+  }
+
+  if (filters.to) {
+    nextQuery = nextQuery.lte('modified_at', `${filters.to}T23:59:59`);
+  }
+
+  return nextQuery;
+}
+
+async function loadFilterOptions(accountId) {
+  const [modulesResult, actionsResult] = await Promise.all([
+    supabase.rpc('get_document_modules', { target_account_id: accountId }),
+    supabase.rpc('get_document_actions', { target_account_id: accountId }),
+  ]);
+
+  if (modulesResult.error || actionsResult.error) {
+    return { modules: [], actions: [] };
+  }
+
+  return {
+    modules: modulesResult.data || [],
+    actions: actionsResult.data || [],
+  };
+}
+
+function sortedUnique(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function getStats(rows) {
@@ -774,6 +980,7 @@ function getStats(rows) {
 async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
   const totalBatches = Math.ceil(rows.length / INSERT_BATCH_SIZE);
   let imported = 0;
+  let duplicates = 0;
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
     const start = batchIndex * INSERT_BATCH_SIZE;
@@ -788,7 +995,7 @@ async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
       detail: `Uploading batch ${batchIndex + 1} of ${totalBatches}`,
     });
 
-    const { error } = await supabase.from('document_activity').insert(
+    const { data, error } = await supabase.from('document_activity').insert(
       batch.map((row) => ({
         account_id: row.account_id,
         upload_id: uploadId,
@@ -796,26 +1003,32 @@ async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
         document_name: row.document_name,
         module: row.module,
         action: row.action,
+        details: row.details,
         modified_by_id: row.modified_by_id,
         modified_at: row.modified_at,
       })),
-    );
+      { ignoreDuplicates: true },
+    ).select('id');
 
     if (error) {
       throw new Error(`Batch ${batchIndex + 1} failed after ${formatNumber(imported)} rows: ${error.message}`);
     }
 
-    imported += batch.length;
+    const insertedCount = data?.length || 0;
+    imported += insertedCount;
+    duplicates += batch.length - insertedCount;
 
     onProgress({
       phase: 'Uploading rows',
       fileName,
-      processed: imported,
+      processed: imported + duplicates,
       total: rows.length,
-      percent: Math.round((imported / rows.length) * 100),
-      detail: `Uploaded batch ${batchIndex + 1} of ${totalBatches}`,
+      percent: Math.round(((imported + duplicates) / rows.length) * 100),
+      detail: `Uploaded batch ${batchIndex + 1} of ${totalBatches}. Inserted ${formatNumber(imported)}, skipped duplicates ${formatNumber(duplicates)}.`,
     });
   }
+
+  return { imported, duplicates };
 }
 
 async function parseUploadFile(file, onProgress = () => {}) {
@@ -891,9 +1104,14 @@ function normalizeUploadRow(row, index, accountId) {
     document_name: String(row['Document Name'] || '').trim(),
     module: String(row.Module || '').trim(),
     action: String(row.Action || '').trim(),
+    details: String(row.Details || '').trim(),
     modified_by_id: String(row['Modified By (Id)'] || '').trim(),
     modified_at: modifiedAt,
   };
+}
+
+function escapeLike(value) {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
 }
 
 function parseUploadDate(value) {

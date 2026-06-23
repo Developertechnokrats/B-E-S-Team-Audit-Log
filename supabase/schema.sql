@@ -28,6 +28,8 @@ create table public.uploads (
   uploaded_by uuid not null references public.profiles(id),
   file_name text not null,
   row_count integer not null default 0,
+  imported_count integer not null default 0,
+  duplicate_count integer not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -49,6 +51,7 @@ create table public.document_activity (
   document_name text not null,
   module text not null,
   action text not null,
+  details text not null default '',
   modified_by_id text not null,
   modified_at timestamptz not null,
   created_at timestamptz not null default now()
@@ -60,6 +63,17 @@ create index document_activity_account_modified_at_idx
 create index document_activity_search_idx
   on public.document_activity (account_id, document_id, module, action, modified_by_id);
 
+create unique index document_activity_dedupe_idx
+on public.document_activity (
+  account_id,
+  document_id,
+  document_name,
+  module,
+  action,
+  modified_by_id,
+  modified_at
+);
+
 create or replace view public.document_activity_view as
 select
   da.id,
@@ -69,6 +83,7 @@ select
   da.document_name,
   da.module,
   da.action,
+  da.details,
   da.modified_by_id,
   coalesce(mm.display_name, da.modified_by_id) as modified_by_name,
   da.modified_at,
@@ -153,6 +168,12 @@ on public.uploads for insert
 to authenticated
 with check (public.current_user_role() = 'admin' and public.can_access_account(account_id));
 
+create policy "Admins update uploads"
+on public.uploads for update
+to authenticated
+using (public.current_user_role() = 'admin' and public.can_access_account(account_id))
+with check (public.current_user_role() = 'admin' and public.can_access_account(account_id));
+
 create policy "Accessible users read modifier mappings"
 on public.modifier_mappings for select
 to authenticated
@@ -173,3 +194,37 @@ create policy "Admins insert document activity"
 on public.document_activity for insert
 to authenticated
 with check (public.current_user_role() = 'admin' and public.can_access_account(account_id));
+
+create or replace function public.get_document_modules(target_account_id uuid)
+returns text[]
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(array_agg(module order by module), array[]::text[])
+  from (
+    select distinct module
+    from public.document_activity
+    where account_id = target_account_id
+      and public.can_access_account(target_account_id)
+      and module <> ''
+  ) distinct_modules;
+$$;
+
+create or replace function public.get_document_actions(target_account_id uuid)
+returns text[]
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select coalesce(array_agg(action order by action), array[]::text[])
+  from (
+    select distinct action
+    from public.document_activity
+    where account_id = target_account_id
+      and public.can_access_account(target_account_id)
+      and action <> ''
+  ) distinct_actions;
+$$;
