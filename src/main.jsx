@@ -679,17 +679,21 @@ function ActivityTable({ rows, loading }) {
           {!loading &&
             rows.map((row) => (
               <tr key={row.id}>
-                <td>{row.document_id}</td>
-                <td>{row.document_name}</td>
+                <td className="id-cell" title={row.document_id}>
+                  {row.document_id}
+                </td>
+                <td className="name-cell">{row.document_name}</td>
                 <td>{row.module}</td>
                 <td>
                   <span className="action-chip">{row.action}</span>
                 </td>
-                <td>
-                  <strong>{row.modified_by_name}</strong>
-                  <span className="subtle">{row.modified_by_id}</span>
+                <td className="modified-cell">
+                  <strong title={row.modified_by_name}>{row.modified_by_name}</strong>
+                  <span className="subtle" title={row.modified_by_id}>
+                    {row.modified_by_id}
+                  </span>
                 </td>
-                <td>{formatDateTime(row.modified_at)}</td>
+                <td className="date-cell">{formatDateTime(row.modified_at)}</td>
                 <td className="details-cell">{row.details || '-'}</td>
               </tr>
             ))}
