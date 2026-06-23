@@ -2,8 +2,7 @@ alter table public.document_activity
   add column if not exists details text not null default '';
 
 alter table public.uploads
-  add column if not exists imported_count integer not null default 0,
-  add column if not exists duplicate_count integer not null default 0;
+  add column if not exists imported_count integer not null default 0;
 
 drop view if exists public.document_activity_view;
 
@@ -26,16 +25,7 @@ left join public.modifier_mappings mm
   on mm.account_id = da.account_id
  and mm.modified_by_id = da.modified_by_id;
 
-create unique index if not exists document_activity_dedupe_idx
-on public.document_activity (
-  account_id,
-  document_id,
-  document_name,
-  module,
-  action,
-  modified_by_id,
-  modified_at
-);
+drop index if exists public.document_activity_dedupe_idx;
 
 create index if not exists document_activity_module_idx
   on public.document_activity (account_id, module);

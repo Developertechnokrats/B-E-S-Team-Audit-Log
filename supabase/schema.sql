@@ -29,7 +29,6 @@ create table public.uploads (
   file_name text not null,
   row_count integer not null default 0,
   imported_count integer not null default 0,
-  duplicate_count integer not null default 0,
   created_at timestamptz not null default now()
 );
 
@@ -62,17 +61,6 @@ create index document_activity_account_modified_at_idx
 
 create index document_activity_search_idx
   on public.document_activity (account_id, document_id, module, action, modified_by_id);
-
-create unique index document_activity_dedupe_idx
-on public.document_activity (
-  account_id,
-  document_id,
-  document_name,
-  module,
-  action,
-  modified_by_id,
-  modified_at
-);
 
 create or replace view public.document_activity_view as
 select

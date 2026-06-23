@@ -361,7 +361,6 @@ function Dashboard({ mode, session }) {
             file_name: file.name,
             row_count: validRows.length,
             imported_count: 0,
-            duplicate_count: 0,
           })
           .select('id')
           .single();
@@ -379,7 +378,6 @@ function Dashboard({ mode, session }) {
           .from('uploads')
           .update({
             imported_count: importResult.imported,
-            duplicate_count: importResult.duplicates,
           })
           .eq('id', upload.id);
 
@@ -980,7 +978,6 @@ function getStats(rows) {
 async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
   const totalBatches = Math.ceil(rows.length / INSERT_BATCH_SIZE);
   let imported = 0;
-  let duplicates = 0;
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
     const start = batchIndex * INSERT_BATCH_SIZE;
@@ -995,7 +992,7 @@ async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
       detail: `Uploading batch ${batchIndex + 1} of ${totalBatches}`,
     });
 
-    const { data, error } = await supabase.from('document_activity').insert(
+    const { error } = await supabase.from('document_activity').insert(
       batch.map((row) => ({
         account_id: row.account_id,
         upload_id: uploadId,
@@ -1007,28 +1004,25 @@ async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
         modified_by_id: row.modified_by_id,
         modified_at: row.modified_at,
       })),
-      { ignoreDuplicates: true },
-    ).select('id');
+    );
 
     if (error) {
       throw new Error(`Batch ${batchIndex + 1} failed after ${formatNumber(imported)} rows: ${error.message}`);
     }
 
-    const insertedCount = data?.length || 0;
-    imported += insertedCount;
-    duplicates += batch.length - insertedCount;
+    imported += batch.length;
 
     onProgress({
       phase: 'Uploading rows',
       fileName,
-      processed: imported + duplicates,
+      processed: imported,
       total: rows.length,
-      percent: Math.round(((imported + duplicates) / rows.length) * 100),
-      detail: `Uploaded batch ${batchIndex + 1} of ${totalBatches}. Inserted ${formatNumber(imported)}, skipped duplicates ${formatNumber(duplicates)}.`,
+      percent: Math.round((imported / rows.length) * 100),
+      detail: `Uploaded batch ${batchIndex + 1} of ${totalBatches}. Inserted ${formatNumber(imported)} rows.`,
     });
   }
 
-  return { imported, duplicates };
+  return { imported };
 }
 
 async function parseUploadFile(file, onProgress = () => {}) {
