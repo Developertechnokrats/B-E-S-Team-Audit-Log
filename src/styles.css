@@ -501,6 +501,49 @@ tr:last-child td {
   cursor: not-allowed;
 }
 
+.import-progress {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  border: 1px solid #d7e2f1;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbff;
+}
+
+.progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-copy span,
+.progress-meta {
+  color: #66758b;
+  font-size: 12px;
+}
+
+.progress-bar {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dfe8f6;
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2454d6;
+  transition: width 0.2s ease;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .mapping-form {
   display: grid;
   grid-template-columns: 1fr 1fr auto;

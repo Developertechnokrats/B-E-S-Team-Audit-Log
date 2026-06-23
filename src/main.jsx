@@ -20,6 +20,8 @@ import { isSupabaseConfigured, supabase } from './supabaseClient';
 import './styles.css';
 
 const requiredHeaders = ['Document ID', 'Document Name', 'Module', 'Action', 'Modified By (Id)', 'Date & Time'];
+const INSERT_BATCH_SIZE = 1000;
+const DASHBOARD_ROW_LIMIT = 1000;
 
 const demoAccounts = [
   { id: 'acc-north', name: 'Northwind Legal' },
@@ -198,6 +200,7 @@ function Dashboard({ mode, session }) {
   const [mappings, setMappings] = useState(demoMappings);
   const [filters, setFilters] = useState(emptyFilters());
   const [status, setStatus] = useState(mode === 'demo' ? 'Demo mode: add Supabase env vars to use live data.' : '');
+  const [importProgress, setImportProgress] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId);
@@ -251,7 +254,8 @@ function Dashboard({ mode, session }) {
         .from('document_activity_view')
         .select('*')
         .eq('account_id', accountId)
-        .order('modified_at', { ascending: false }),
+        .order('modified_at', { ascending: false })
+        .limit(DASHBOARD_ROW_LIMIT),
       supabase.from('modifier_mappings').select('*').eq('account_id', accountId).order('modified_by_id'),
     ]);
 
@@ -274,10 +278,27 @@ function Dashboard({ mode, session }) {
     if (!canUpload || !file || !activeAccountId) return;
 
     setLoading(true);
+    setImportProgress({
+      phase: 'Parsing file',
+      fileName: file.name,
+      processed: 0,
+      total: 0,
+      percent: 0,
+      detail: 'Reading rows from your file...',
+    });
     setStatus(`Parsing ${file.name}...`);
 
     try {
-      const parsedRows = await parseUploadFile(file);
+      const parsedRows = await parseUploadFile(file, ({ processed, total, percent }) => {
+        setImportProgress({
+          phase: 'Parsing file',
+          fileName: file.name,
+          processed,
+          total,
+          percent,
+          detail: total ? `${formatNumber(processed)} of ${formatNumber(total)} rows parsed` : 'Parsing rows...',
+        });
+      });
       const normalizedRows = parsedRows.map((row, index) => normalizeUploadRow(row, index, activeAccountId));
       const validRows = normalizedRows.filter(Boolean);
 
@@ -286,6 +307,15 @@ function Dashboard({ mode, session }) {
       }
 
       if (mode === 'live') {
+        setImportProgress({
+          phase: 'Creating upload record',
+          fileName: file.name,
+          processed: 0,
+          total: validRows.length,
+          percent: 0,
+          detail: `${formatNumber(validRows.length)} valid rows ready to import`,
+        });
+
         const { data: upload, error: uploadError } = await supabase
           .from('uploads')
           .insert({
@@ -299,20 +329,13 @@ function Dashboard({ mode, session }) {
 
         if (uploadError) throw uploadError;
 
-        const { error: insertError } = await supabase.from('document_activity').insert(
-          validRows.map((row) => ({
-            account_id: row.account_id,
-            upload_id: upload.id,
-            document_id: row.document_id,
-            document_name: row.document_name,
-            module: row.module,
-            action: row.action,
-            modified_by_id: row.modified_by_id,
-            modified_at: row.modified_at,
-          })),
-        );
+        await insertRowsInBatches({
+          rows: validRows,
+          uploadId: upload.id,
+          fileName: file.name,
+          onProgress: setImportProgress,
+        });
 
-        if (insertError) throw insertError;
         await refreshAccountData(activeAccountId);
       } else {
         setRows((currentRows) => [
@@ -325,8 +348,22 @@ function Dashboard({ mode, session }) {
         ]);
       }
 
+      setImportProgress({
+        phase: 'Import complete',
+        fileName: file.name,
+        processed: validRows.length,
+        total: validRows.length,
+        percent: 100,
+        detail: `${formatNumber(validRows.length)} rows imported successfully`,
+      });
       setStatus(`Uploaded ${validRows.length} rows to ${activeAccount?.name || 'selected account'}.`);
     } catch (error) {
+      setImportProgress((current) => ({
+        ...(current || {}),
+        phase: 'Import failed',
+        fileName: file.name,
+        detail: error.message,
+      }));
       setStatus(error.message);
     }
 
@@ -468,7 +505,7 @@ function Dashboard({ mode, session }) {
         </section>
 
         <section className="two-column">
-          <UploadPanel canUpload={canUpload} onUpload={handleFileUpload} loading={loading} />
+          <UploadPanel canUpload={canUpload} onUpload={handleFileUpload} loading={loading} progress={importProgress} />
           <MappingPanel canEdit={canUpload} mappings={mappings} accountId={activeAccountId} onSave={saveMapping} />
         </section>
       </section>
@@ -568,7 +605,7 @@ function ActivityTable({ rows, loading }) {
   );
 }
 
-function UploadPanel({ canUpload, onUpload, loading }) {
+function UploadPanel({ canUpload, onUpload, loading, progress }) {
   return (
     <section className="panel" id="upload">
       <div className="panel-heading">
@@ -590,6 +627,26 @@ function UploadPanel({ canUpload, onUpload, loading }) {
           onChange={(event) => onUpload(event.target.files?.[0])}
         />
       </div>
+
+      {progress && (
+        <div className="import-progress" role="status" aria-live="polite">
+          <div className="progress-copy">
+            <strong>{progress.phase}</strong>
+            <span>{progress.fileName}</span>
+          </div>
+          <div className="progress-bar" aria-label="Import progress">
+            <span style={{ width: `${Math.min(progress.percent || 0, 100)}%` }} />
+          </div>
+          <div className="progress-meta">
+            <span>{progress.detail}</span>
+            {progress.total > 0 && (
+              <span>
+                {formatNumber(progress.processed)} / {formatNumber(progress.total)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -714,17 +771,86 @@ function getStats(rows) {
   };
 }
 
-async function parseUploadFile(file) {
+async function insertRowsInBatches({ rows, uploadId, fileName, onProgress }) {
+  const totalBatches = Math.ceil(rows.length / INSERT_BATCH_SIZE);
+  let imported = 0;
+
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+    const start = batchIndex * INSERT_BATCH_SIZE;
+    const batch = rows.slice(start, start + INSERT_BATCH_SIZE);
+
+    onProgress({
+      phase: 'Uploading rows',
+      fileName,
+      processed: imported,
+      total: rows.length,
+      percent: Math.round((imported / rows.length) * 100),
+      detail: `Uploading batch ${batchIndex + 1} of ${totalBatches}`,
+    });
+
+    const { error } = await supabase.from('document_activity').insert(
+      batch.map((row) => ({
+        account_id: row.account_id,
+        upload_id: uploadId,
+        document_id: row.document_id,
+        document_name: row.document_name,
+        module: row.module,
+        action: row.action,
+        modified_by_id: row.modified_by_id,
+        modified_at: row.modified_at,
+      })),
+    );
+
+    if (error) {
+      throw new Error(`Batch ${batchIndex + 1} failed after ${formatNumber(imported)} rows: ${error.message}`);
+    }
+
+    imported += batch.length;
+
+    onProgress({
+      phase: 'Uploading rows',
+      fileName,
+      processed: imported,
+      total: rows.length,
+      percent: Math.round((imported / rows.length) * 100),
+      detail: `Uploaded batch ${batchIndex + 1} of ${totalBatches}`,
+    });
+  }
+}
+
+async function parseUploadFile(file, onProgress = () => {}) {
   const extension = file.name.split('.').pop().toLowerCase();
 
   if (extension === 'csv') {
     return new Promise((resolve, reject) => {
+      const rows = [];
+      let processed = 0;
+      const estimatedRows = Math.max(1, Math.round(file.size / 180));
+
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        complete: (result) => {
-          validateHeaders(result.meta.fields || []);
-          resolve(result.data);
+        step: (result, parser) => {
+          try {
+            validateHeaders(result.meta.fields || []);
+            rows.push(result.data);
+            processed += 1;
+
+            if (processed === 1 || processed % 5000 === 0) {
+              onProgress({
+                processed,
+                total: estimatedRows,
+                percent: Math.min(95, Math.round((processed / estimatedRows) * 100)),
+              });
+            }
+          } catch (error) {
+            parser.abort();
+            reject(error);
+          }
+        },
+        complete: () => {
+          onProgress({ processed, total: processed, percent: 100 });
+          resolve(rows);
         },
         error: reject,
       });
@@ -734,6 +860,7 @@ async function parseUploadFile(file) {
   const sheetRows = await readXlsxFile(file);
   const headers = (sheetRows[0] || []).map((header) => String(header || '').trim());
   validateHeaders(headers);
+  onProgress({ processed: sheetRows.length - 1, total: sheetRows.length - 1, percent: 100 });
 
   return sheetRows.slice(1).map((values) =>
     headers.reduce((record, header, index) => {
@@ -795,6 +922,10 @@ function formatShortDate(value) {
     month: 'short',
     day: 'numeric',
   }).format(new Date(value));
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat().format(value || 0);
 }
 
 createRoot(document.getElementById('root')).render(<App />);
