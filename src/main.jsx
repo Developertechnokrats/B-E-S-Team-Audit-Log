@@ -424,6 +424,26 @@ function Dashboard({ mode, session }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, activeAccountId, debouncedFilters, page, pageSize]);
 
+  useEffect(() => {
+    if (!activeAccountId) return;
+    refreshFilterOptions(activeAccountId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, activeAccountId]);
+
+  async function refreshFilterOptions(accountId) {
+    if (mode !== 'live') {
+      const demoAccountRows = demoRows.filter((row) => row.account_id === accountId);
+      setFilterOptions({
+        modules: sortedUnique(demoAccountRows.map((row) => row.module)),
+        actions: sortedUnique(demoAccountRows.map((row) => row.action)),
+      });
+      return;
+    }
+
+    const optionsResult = await loadFilterOptions(accountId);
+    setFilterOptions(optionsResult);
+  }
+
   async function refreshAccountData(accountId, activeFilters = debouncedFilters) {
     const requestId = latestActivityRequest.current + 1;
     latestActivityRequest.current = requestId;
@@ -435,10 +455,6 @@ function Dashboard({ mode, session }) {
       const start = (page - 1) * pageSize;
       setRows(filteredDemoRows.slice(start, start + pageSize));
       setTotalRows(filteredDemoRows.length);
-      setFilterOptions({
-        modules: sortedUnique(demoAccountRows.map((row) => row.module)),
-        actions: sortedUnique(demoAccountRows.map((row) => row.action)),
-      });
       setLoading(false);
       return;
     }
@@ -449,12 +465,10 @@ function Dashboard({ mode, session }) {
       { data: rowData, error: rowError },
       { data: countData, error: countError },
       { data: mappingData, error: mappingError },
-      optionsResult,
     ] = await Promise.all([
       supabase.rpc('search_document_activity', searchParams),
       supabase.rpc('count_document_activity', searchParams),
       supabase.from('modifier_mappings').select('*').eq('account_id', accountId).order('modified_by_id'),
-      loadFilterOptions(accountId),
     ]);
 
     if (requestId !== latestActivityRequest.current) {
@@ -468,7 +482,6 @@ function Dashboard({ mode, session }) {
       setRows(guardedRows);
       setMappings(mappingData || []);
       setTotalRows(countData || 0);
-      setFilterOptions(optionsResult);
       setStatus('');
     }
 
@@ -552,6 +565,7 @@ function Dashboard({ mode, session }) {
 
         if (uploadUpdateError) throw uploadUpdateError;
 
+        await refreshFilterOptions(activeAccountId);
         await refreshAccountData(activeAccountId);
       } else {
         setRows((currentRows) => [
